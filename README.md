@@ -8,4 +8,4 @@ This repository is a complimentary material for the manuscript:
 This repository is still under construction to complete all the implementation code.
 
 ## Prerequisite
-- Casadi
+- CasADi link here
