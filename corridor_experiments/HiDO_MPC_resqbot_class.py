@@ -1,11 +1,40 @@
+""" 
+HiDO-MPC Class ResQbot 
+author: R Saputra
+2021
+"""
 from casadi import *
 import numpy as np
 import time
 
 
+def cal_heading_line(target_pose):
+    # line define by ax + by + c = 0
+    # tan_theta = -(a/b)
+    tan_theta = np.tan(target_pose.yaw)
+    b = -1
+    a = tan_theta
+    c = -((a*target_pose.x)+(b*target_pose.y))
+    return a, b, c
+
+def cal_constrain_line(target_pose):
+    a,b,c = cal_heading_line(target_pose)
+    a1 = b
+    b1 = -a
+    c1 = -((a1*target_pose.x) + (b1*target_pose.y))
+    return np.array([a1, b1, c1])
+
+def cal_dist2line(current_pose, target_pose):
+    tan_theta = np.tan(target_pose[2])
+    b = -1
+    a = tan_theta
+    c = -((a*target_pose[0])+(b*target_pose[1]))
+    dist2line = (fabs((a*current_pose[0])+(b*current_pose[1])+c))/(np.sqrt((a**2)+(b**2)))
+    return dist2line
+
 
 class MPC_single_shooting_multi_objective():
-    def __init__(self, map, init_vehicle, casualty, obs_list, T, N, v_max, v_min, w_max, w_min):
+    def __init__(self, T, N, v_max, v_min, w_max, w_min, mpc_type):
         # Parameters
         # -----------------------------------
         # Initialisation 
@@ -20,48 +49,33 @@ class MPC_single_shooting_multi_objective():
         # -----------------------------------
         self.T = T
         self.N = N
-        self.casualty = casualty
-        self.vehicle = init_vehicle
-        self.obs_list = obs_list
-        # self.filtered_obs = self._filter_obstacle()
-        self.filtered_obs = obs_list
 
         self.v_max = v_max 
         self.v_min = v_min
         self.w_max = w_max
         self.w_min = w_min
-
-        self.x_min = map.xmin 
-        self.x_max = map.xmax 
-        self.y_min = map.ymin 
-        self.y_max = map.ymax
+        self.mpc_type = mpc_type
 
         # Weight
-        self.aaa = 100
-        self.bbb = 1
+        self.aaa = 36.56724647970869
+        self.bbb = 1.1258826676004698
+        self.ccc = 7.377948408873998
+        self.ddd = 68.01501281612002
+        self.eee = 60.088582798687845
+        self.fff = 96.78399611800188
+
+        self.ggg = 10.752561956173809
+        self.hhh = 98.01002847504917
+        self.iii = 93.03643454111301
+        self.jjj = 95.28025019237253
+        self.kkk = 71.1610072822886
+        self.lll = 11.324284624727976
 
         self._form_model()
         self._form_obj()
         self._form_const()
         self._form_OPT_variables()
         self.form_args()
-
-    def _filter_obstacle(self):
-        if self.obs_list !=[]:
-            vehicle_node = np.array([self.vehicle.x, self.vehicle.y])
-            obs_nodes = np.zeros((len(self.obs_list),2))
-            for i in range(len(self.obs_list)):
-                obs_nodes[i,0]=self.obs_list[i].x0
-                obs_nodes[i,1]=self.obs_list[i].y0
-            dist = np.sqrt(np.sum((obs_nodes - vehicle_node)**2, axis=1))
-            filtered_obs_idx = np.where(dist < 3.5)
-            filtered_obs_idx = filtered_obs_idx[0]
-            filtered_obs_idx.astype(int)
-            filtered_obs = []
-            for idx in filtered_obs_idx:
-                filtered_obs.append(self.obs_list[idx])
-            return filtered_obs
-        return []
 
     # -------------------------
     # Model Formulation
@@ -71,23 +85,19 @@ class MPC_single_shooting_multi_objective():
         x = SX.sym('x') 
         y = SX.sym('y') 
         theta = SX.sym('theta')
-        # v = SX.sym('v')
-        # w = SX.sym('w')
-        # states = vertcat(x, y, theta, v, w)
-        states = vertcat(x, y, theta)
+        v = SX.sym('v')
+        w = SX.sym('w')
+        states = vertcat(x, y, theta, v, w)
         n_states = states.size(1)
 
         # Control State
-        # a = SX.sym('a') 
-        # alpha = SX.sym('alpha')
-        # controls = vertcat(a, alpha)
-        v = SX.sym('v')
-        w = SX.sym('w')
-        controls = vertcat(v, w)
+        a = SX.sym('a') 
+        alpha = SX.sym('alpha')
+        controls = vertcat(a, alpha)
         n_controls = controls.size(1)
 
         # State Transition Function
-        rhs = vertcat(v*cos(theta), v*sin(theta), w) # system r.h.s
+        rhs = vertcat(v*cos(theta), v*sin(theta), w, a, alpha) # system r.h.s
 
         # nonlinear mapping function f(x,u)
         f = Function('f',[states, controls],[rhs]) 
@@ -103,8 +113,6 @@ class MPC_single_shooting_multi_objective():
         # This vector consists of:
         #   1. the initial and 
         #   2. the reference state of the robot
-        # P = SX.sym('P',n_states + n_states)
-        # self.P = P
         #   3. the rprevious control
         P = SX.sym('P',n_states + n_states)
         self.P = P
@@ -117,7 +125,7 @@ class MPC_single_shooting_multi_objective():
         # State Prediction Model
         # Compute State Prediction Recursively 
         # based on State Transition Model
-        X[:,0] = P[0:3] # initial state
+        X[:,0] = P[0:5] # initial state
         for k in range(self.N):
             st = X[:,k]  
             con = U[:,k]
@@ -145,90 +153,86 @@ class MPC_single_shooting_multi_objective():
         # Q = weighing matrices (states)
         # R = weighing matrices (controls)
 
-        Q = SX.zeros(3,3); 
-        Q[0,0] = 1;   Q[1,1] = 1;  Q[2,2] = 0.75; 
+        Q = SX.zeros(3,3); Q[0,0] = 1
+        Q[1,1] = 5;  Q[2,2] = 0.1
 
         R = SX.zeros(2,2)
         R[0,0] = 0.1;  R[1,1] = 0.01 
 
         # Compute Objective
         self.obj = 0 
-        for k in range(self.N):
-            st = self.X[:,k]  
-            con = self.U[:,k]
-            # Calculate Obstacle cost
-            gcrx, gcry, gcrr = self.calc_global_four_circles(st[0:3])
-            obs_obj = 0
-            for j in range(len(gcrx)):
-                for obs in self.filtered_obs:
-                    dist = np.sqrt(((obs.x0-gcrx[j])**2)+((obs.y0-gcry[j])**2))-(obs.radius+gcrr[j]+0.1)
-                    bool_weight = 1/(1+np.exp(60*(dist)))
-                    obs_obj =  obs_obj + bool_weight*150#*(1/(dist**2))
+        if self.mpc_type==0:
+            for k in range(self.N):
+                st = self.X[:,k]  
+                con = self.U[:,k]
+                target = self.P[5:10]
+                dist2line = self.cal_dist2line_cost(st[0:3], target[0:3])
+                self.obj = self.obj+self.aaa*dist2line+self.bbb*mtimes(mtimes(transpose(st[3:5]),R),st[3:5])+self.ccc*mtimes(mtimes(transpose(con),R),con)
+        elif self.mpc_type==1:
+            for k in range(self.N):
+                st = self.X[:,k]  
+                con = self.U[:,k]
+                target = self.P[5:10]
+                dist2line = self.cal_dist2line_cost(st[0:3], target[0:3])
+                dist_obj = ((st[0]-self.P[5])**2)+((st[1]-self.P[6])**2)
+                angle_diff = ((st[2]-self.P[7])**2)
+                self.obj = self.obj+self.ddd*dist2line+self.eee*angle_diff+self.fff*mtimes(mtimes(transpose(st[3:5]),R),st[3:5])+self.ggg*mtimes(mtimes(transpose(con),R),con)
+        elif self.mpc_type==2:
+            for k in range(self.N):
+                st = self.X[:,k]  
+                con = self.U[:,k]
+                target = self.P[5:10]
+                dist2line = self.cal_dist2line_cost(st[0:3], target[0:3])
+                dist_obj = ((st[0]-self.P[5])**2)+((st[1]-self.P[6])**2)
+                angle_diff = ((st[2]-self.P[7])**2)
+                self.obj = self.obj+self.hhh*dist2line+self.iii*dist_obj+self.jjj*angle_diff+self.kkk*mtimes(mtimes(transpose(st[3:5]),R),st[3:5])+self.lll*mtimes(mtimes(transpose(con),R),con)
 
-            self.obj = (self.obj+self.aaa*mtimes(mtimes(transpose((st-self.P[3:6])),Q),(st-self.P[3:6]))
-                                +self.bbb*0.5*mtimes(mtimes(transpose(con),R),con)
-                                +obs_obj)
+    def cal_dist2line_cost(self, current_pose, target_pose):
+        a,b,c = self.cal_heading_line(target_pose)
+        dist2line = (((a*current_pose[0])+(b*current_pose[1])+c)**2)
+        return dist2line
 
     # -------------------------------
     # Constraints Formulation
     # ------------------------------
+
     # Stacking all constraint variable elements
     def _form_const(self):
         self.g = []
 
-        # 1. Casualty
+        # 1. Safety constrain
+        #       Constraining distance from the robot into safety line
+        for k in range(self.N+1):   
+            self.g = vertcat(self.g, self.X[0,k])   
+        self.n_safety_constraints = self.g.shape[0]
+
+        # 2. Robot geometrics constrain
+        #       Constraining all points in vehicle contours
+        #       in y direction
         for k in range(self.N+1):
-            self._calc_global_four_circles(self.X[0:3,k])
-            for i in range(len(self.casualty.gccrx)):
-                for j in range(len(self.gcrx)):
-                    dist = np.sqrt(((self.casualty.gccrx[i]-self.gcrx[j])**2)+((self.casualty.gccry[i]-self.gcry[j])**2))-(self.casualty.gccrr[i]+self.gcrr[j]+0.025)#0.45
-                    self.g = vertcat(self.g, dist)
-        self.n_casualty_constraints = self.g.shape[0]
+            self._calc_global_vehicle_contour(self.X[0:3,k])
+            for j in range(len(self.gvy)):
+                self.g = vertcat(self.g, self.gvy[j])
+        self.n_geometric_constraints = self.g.shape[0]
 
-        # 2. Map constrain  
-        for k in range(self.N+1):
-            self._calc_global_four_circles(self.X[0:3,k])
-            for x in self.gcrx:
-                self.g = vertcat(self.g, x)
-        self.n_map_x_constraints = self.g.shape[0]
+        # 3. Linear speed constrain
+        for k in range(self.N+1):   
+            self.g = vertcat(self.g, self.X[3,k])   
+        self.n_linear_speed_constraints = self.g.shape[0]
 
-        for k in range(self.N+1):
-            self._calc_global_four_circles(self.X[0:3,k])
-            for y in self.gcry:
-                self.g = vertcat(self.g, y)
-        self.n_map_y_constraints = self.g.shape[0]
+        # 3. Angular speed constrain
+        for k in range(self.N+1):   
+            self.g = vertcat(self.g, self.X[4,k])   
+        self.n_angular_speed_constraints = self.g.shape[0]
 
-        # 3. Obstacles constrain  
-        if self.obs_list !=[]:
-            for k in range(self.N+1):
-                self._calc_global_four_circles(self.X[0:3,k])
-                for j in range(len(self.gcrx)):
-                    for obs in self.filtered_obs:
-                        dist = np.sqrt(((obs.x0-self.gcrx[j])**2)+((obs.y0-self.gcry[j])**2))-(obs.radius+self.gcrr[j]+0.01)
-                        self.g = vertcat(self.g, dist)
-            self.n_obstacles_to_circles_distances_constraints = self.g.shape[0]
-            print self.n_obstacles_to_circles_distances_constraints
-       
-    def _calc_global_four_circles(self, st):
-        cr_x = [-0.1, 0.3, 0.7, 1.2]
-        cr_y = [0.0, 0.0, 0.0, 0.0]
-        cr_r = [0.4, 0.4, 0.4, 0.4]
-        self.gcrx = [(ix * np.cos(st[2,0]) + iy * np.sin(st[2,0])) +
-              st[0,0] for (ix, iy) in zip(cr_x, cr_y)]
-        self.gcry = [(ix * np.sin(st[2,0]) - iy * np.cos(st[2,0])) +
-              st[1,0] for (ix, iy) in zip(cr_x, cr_y)]
-        self.gcrr = cr_r
 
-    def calc_global_four_circles(self, st):
-        cr_x = [-0.1, 0.3, 0.7, 1.2]
-        cr_y = [0.0, 0.0, 0.0, 0.0]
-        cr_r = [0.4, 0.4, 0.4, 0.4]
-        gcrx = [(ix * np.cos(st[2,0]) + iy * np.sin(st[2,0])) +
-              st[0,0] for (ix, iy) in zip(cr_x, cr_y)]
-        gcry = [(ix * np.sin(st[2,0]) - iy * np.cos(st[2,0])) +
-              st[1,0] for (ix, iy) in zip(cr_x, cr_y)]
-        gcrr = cr_r
-        return gcrx, gcry, gcrr
+    def _calc_global_vehicle_contour(self, st):
+        v_x = [-0.4, -0.3, 1.4, 1.5, 1.4, -0.3, -0.4]
+        v_y = [0.0, -0.3, -0.3, 0.0, 0.3, 0.3, 0.0]
+        self.gvx = [(ix * np.cos(st[2,0]) + iy * np.sin(st[2,0])) +
+              st[0,0] for (ix, iy) in zip(v_x, v_y)]
+        self.gvy = [(ix * np.sin(st[2,0]) - iy * np.cos(st[2,0])) +
+              st[1,0] for (ix, iy) in zip(v_x, v_y)]
 
     # -----------------------------------
     # Formulising Non Linear Programming
@@ -277,38 +281,40 @@ class MPC_single_shooting_multi_objective():
         array_lbg = np.zeros(self.g.shape)
         array_ubg = np.zeros(self.g.shape)
 
-        # Arguments for casualty constraints
-        array_lbg[0:self.n_casualty_constraints,:] = 0.0
-        array_ubg[0:self.n_casualty_constraints,:] = inf
+        # Arguments for safety constraits
+        array_lbg[0:self.n_safety_constraints,:] = 0.5
+        array_ubg[0:self.n_safety_constraints,:] = 1.5
 
-        # Arguments for map constraints
-        array_lbg[self.n_casualty_constraints+1:self.n_map_x_constraints,:] = self.x_min
-        array_ubg[self.n_casualty_constraints+1:self.n_map_x_constraints,:] = self.x_max
-        array_lbg[self.n_map_x_constraints+1:self.n_map_y_constraints,:] = self.y_min
-        array_ubg[self.n_map_x_constraints+1:self.n_map_y_constraints,:] = self.y_max
+        # Arguments for robot geometric constraints
+        array_lbg[self.n_safety_constraints+1:self.n_geometric_constraints,:] = -0.9
+        array_ubg[self.n_safety_constraints+1:self.n_geometric_constraints,:] = 0.9
 
-        # Arguments for obstacle constraints
-        if self.obs_list !=[]:
-            array_lbg[self.n_map_y_constraints+1:self.n_obstacles_to_circles_distances_constraints,:] = 0.0
-            array_ubg[self.n_map_y_constraints+1:self.n_obstacles_to_circles_distances_constraints,:] = inf
+        # Arguments for robot linear speed constraints
+        array_lbg[self.n_geometric_constraints+1:self.n_linear_speed_constraints,:] = -0.5
+        array_ubg[self.n_geometric_constraints+1:self.n_linear_speed_constraints,:] = 0.5
+
+        # Arguments for robot angular speed constraints
+        array_lbg[self.n_linear_speed_constraints+1:self.g.shape[0],:] = -0.25
+        array_ubg[self.n_linear_speed_constraints+1:self.g.shape[0],:] = 0.25
 
         # Combaining and input to the dictionary
         args['lbg'] =  array_lbg    # lower bound of the states x and y
         args['ubg'] =  array_ubg    # upper bound of the states x and y 
 
+
         # 2. inequality function for decission variables
         lbx = np.zeros((2*self.N,1))
-        lbx[range(0, 2*self.N, 2),0] = self.v_min 
-        lbx[range(1, 2*self.N, 2),0] = self.w_min
+        lbx[range(0, 2*self.N, 2),0] = -1.15 #self.v_min 
+        lbx[range(1, 2*self.N, 2),0] = -0.5 #self.w_min
 
         ubx = np.zeros((2*self.N,1))
-        ubx[range(0, 2*self.N, 2),0] = self.v_max 
-        ubx[range(1, 2*self.N, 2),0] = self.w_max
+        ubx[range(0, 2*self.N, 2),0] = 0.5 #self.v_max 
+        ubx[range(1, 2*self.N, 2),0] = 0.5 #self.w_max
 
         # Combaining and input to the dictionary
         args['lbx'] = lbx     # lower bound of the inputs v and omega
         args['ubx'] = ubx     # upper bound of the inputs v and omega 
-        self.args = args  
+        self.args = args 
 
     # -----------------------------------
     # Solving the NLP 
@@ -321,7 +327,7 @@ class MPC_single_shooting_multi_objective():
                      lbg=self.args['lbg'], 
                      ubg=self.args['ubg'], 
                      p=p) 
-        return sol, self.filtered_obs
+        return sol
 
     def move_robot(self, x0, u, t0):
         st = x0
@@ -339,32 +345,18 @@ class MPC_single_shooting_multi_objective():
     def cal_heading_line(self, target_pose):
         # line define by ax + by + c = 0
         # tan_theta = -(a/b)
-        if abs(self.casualty.yaw) != np.pi/2:
-            tan_theta = np.tan(target_pose[2])
-            b = -1
-            a = tan_theta
-            c = -((a*target_pose[0])+(b*target_pose[1]))
-            return a, b, c
-        else:
-            b = 0
-            a = 1
-            c = target_pose[0]
-            return a, b, c
-       
-    def cal_end_line(self, target_pose):
-        distance = 1
-        if abs(self.casualty.yaw) != np.pi/2:
-            sin_theta = np.sin(target_pose[2])
-            cos_theta = np.cos(target_pose[2])
-            xe = target_pose[0]-(distance*cos_theta)
-            ye = target_pose[1]-(distance*sin_theta)
-            end_line = np.array([xe,ye])
-            return end_line
-        else:
-            xe = target_pose[0]
-            ye = target_pose[1]+distance
-            end_line = np.array([xe,ye])
-            return end_line  
+        tan_theta = np.tan(target_pose[2])
+        b = -1
+        a = tan_theta
+        c = -((a*target_pose[0])+(b*target_pose[1]))
+        return a, b, c
+
+    def cal_constrain_line(self, target_pose):
+        a,b,c = cal_heading_line(target_pose)
+        a1 = b
+        b1 = -a
+        c1 = -((a1*target_pose.x) + (b1*target_pose.y))
+        return a1, b1, c1
 
 def main():
     print("start!!")
