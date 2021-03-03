@@ -9,3 +9,6 @@ This repository is still under construction to complete all the implementation c
 
 ## Prerequisite
 - CasADi link [here](https://web.casadi.org/)
+
+## Project website
+- Link [here](https://sites.google.com/view/hido-mpc-resqbot)
