@@ -11,9 +11,6 @@ import sys
 import os
 sys.path.append(os.path.abspath('corridor_experiments'))
 from corridor_experiments import HiDO_MPC_resqbot_main as HIDO
-from corridor_experiments import SMPC_resqbot_main as SMPC
-from corridor_experiments import BMPC_resqbot_main as BMPC
-from corridor_experiments import VMPC_resqbot_main as VMPC
 from corridor_experiments.visualisation import simulate_robot
 
 METHOD = ['HIDO', 'SMPC', 'BMPC', 'VMPC']
@@ -33,16 +30,6 @@ def set_init_goal(S):
     C0 = EXP_SETUP[S][1]
     return V0,C0
 
-def call_mpc(M, V0, C0, T, N):
-    if M == 'HIDO':
-        return HIDO.main(V0, C0, T, N)
-    if M == 'SMPC':
-        return SMPC.main(V0, C0, T, N)
-    if M == 'BMPC':
-        return BMPC.main(V0, C0, T, N)
-    if M == 'VMPC':
-        return VMPC.main(V0, C0, T, N)
-
 if __name__ == '__main__':
     T = .25      # sampling time [s]
     N = 25       # prediction horizon
@@ -53,5 +40,5 @@ if __name__ == '__main__':
     for M in M_list:
         for S in S_list:
             V0,C0 = set_init_goal(S)
-            t,xx,xx1,u_cl,xs,c1,*_  = call_mpc(M, V0, C0, T, N)
+            t,xx,xx1,u_cl,xs,c1,*_  = HIDO.main(V0, C0, T, N)
             simulate_robot(t, xx, xx1, u_cl, xs, N, T,c1, M, S)
