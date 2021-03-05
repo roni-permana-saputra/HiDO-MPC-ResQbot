@@ -12,3 +12,6 @@ This repository is still under construction to complete all the implementation c
 
 ## Project website
 - Link [here](https://sites.google.com/view/hido-mpc-resqbot)
+
+## Cite the project
+R. P. Saputra, N. Rakicevic, D. Chappell, K. Wang and P. Kormushev, "Hierarchical Decomposed-Objective Model Predictive Control for Autonomous Casualty Extraction," in IEEE Access, doi: 10.1109/ACCESS.2021.3063782.
